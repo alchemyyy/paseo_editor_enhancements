@@ -1,0 +1,32 @@
+{
+  "name": "editor-enhancements",
+  "private": true,
+  "version": "0.1.0",
+  "files": [
+    "paseo-plugin.json",
+    "index.client.tsx",
+    "index.server.ts",
+    "client/",
+    "server/",
+    "shared/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "vendor": "node scripts/vendor.mjs",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"client/*.test.ts\" \"server/*.test.ts\""
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.13.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.2.0",
+    "dompurify": "^3.4.17",
+    "esbuild": "^0.25.12",
+    "github-markdown-css": "5.8.1",
+    "mathjax": "^3.2.2",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.9.3",
+    "yaml": "^2.9.1",
+    "zod": "^4.4.3"
+  }
+}
