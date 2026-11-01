@@ -6,12 +6,14 @@ import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
 import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import {
   MAX_IMAGE_BYTES,
+  MAX_RESOURCE_BYTES,
   type readFileRpc,
   type readImageRpc,
+  type readResourceRpc,
   type resolveLinkRpc,
   type writeFileRpc,
 } from "../shared/contracts";
-import { candidatePaths, imageMimeType } from "./references";
+import { candidatePaths, imageMimeType, resourceMimeType } from "./references";
 
 async function workspaceRoot(context: PluginHandlerContext, workspaceId: string): Promise<string | null> {
   const { entries } = await context.paseo.workspaces.list({});
@@ -48,6 +50,17 @@ export async function readImage(
   if (found.size > MAX_IMAGE_BYTES) throw new Error(`Image is larger than ${MAX_IMAGE_BYTES / 1024 / 1024} MiB`);
   const bytes = await readFile(found.path);
   return { mimeType, base64: bytes.toString("base64") };
+}
+
+export async function readResource(
+  input: RpcInput<typeof readResourceRpc>,
+  context: PluginHandlerContext,
+): Promise<RpcOutput<typeof readResourceRpc>> {
+  const found = await findReference(input, context);
+  if (!found || found.kind !== "file") throw new Error(`File not found: ${input.reference}`);
+  if (found.size > MAX_RESOURCE_BYTES) throw new Error(`File is larger than ${MAX_RESOURCE_BYTES / 1024 / 1024} MiB`);
+  const bytes = await readFile(found.path);
+  return { mimeType: resourceMimeType(found.path), base64: bytes.toString("base64") };
 }
 
 export async function resolveLink(

@@ -1,6 +1,6 @@
 {
   "id": "editor-enhancements",
   "name": "Editor enhancements",
-  "description": "Markdown preview themes and a live Split view, pinned tabs, a per-pane LRU tab limit, gutter line references for chat, and file editors in separate OS windows",
+  "description": "Markdown preview themes, live Split views for Markdown and HTML, pinned tabs, a per-pane LRU tab limit, gutter line references for chat, and file editors in separate OS windows",
   "requirements": { "paseo": ">=0.13.0" }
 }

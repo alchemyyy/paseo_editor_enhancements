@@ -1,33 +1,61 @@
-// The Markdown toolbar controls: a labeled renderer dropdown, a labeled color palette dropdown, and
-// a Preview | Split | Source control standing in for Paseo's Preview | Source. The stand-in copies
-// the size and type of Paseo's control as laid out, and takes its colors from Paseo's CSS
-// variables, as Paseo's segmented control does (components/ui/segmented-control.tsx). Paseo's
-// style classes cannot be reused: their rules are rewritten in place as the control they belong to
-// changes state.
+// The toolbar controls of a Markdown or HTML panel: a Preview | Split | Source control standing in
+// for Paseo's Preview | Source, and for Markdown a labeled renderer dropdown and a labeled color
+// palette dropdown before it. The stand-in copies the size and type of Paseo's control as laid out,
+// and takes its colors from Paseo's CSS variables, as Paseo's segmented control does
+// (components/ui/segmented-control.tsx). Paseo's style classes cannot be reused: their rules are
+// rewritten in place as the control they belong to changes state.
+import type { PanelKind } from "./fiber";
 import { ENGINE_IDS, ENGINES, type EngineId, PALETTE_IDS, PALETTES, type PaletteId } from "./palettes";
 
 export type Layout = "preview" | "split" | "source";
 
-const LAYOUTS: readonly { value: Layout; label: string; title: string }[] = [
-  { value: "preview", label: "Preview", title: "Rendered Markdown" },
-  { value: "split", label: "Split", title: "Source and preview side by side; the preview follows unsaved edits" },
-  { value: "source", label: "Source", title: "Markdown source" },
-];
+/** Preview | Split | Source as each kind of panel describes them */
+const LAYOUTS: Readonly<Record<PanelKind, readonly { value: Layout; label: string; title: string }[]>> = {
+  markdown: [
+    { value: "preview", label: "Preview", title: "Rendered Markdown" },
+    { value: "split", label: "Split", title: "Source and preview side by side; the preview follows unsaved edits" },
+    { value: "source", label: "Source", title: "Markdown source" },
+  ],
+  html: [
+    { value: "preview", label: "Preview", title: "Rendered page" },
+    { value: "split", label: "Split", title: "Source and page side by side; the page follows unsaved edits" },
+    { value: "source", label: "Source", title: "HTML source" },
+  ],
+};
 
-export interface ControlsState {
+const GROUP_LABELS: Readonly<Record<PanelKind, string>> = { markdown: "Markdown view", html: "HTML view" };
+
+/** What Markdown's renderer and palette dropdowns show */
+export interface RendererState {
   /** The renderer chosen, which the dropdown shows even where the GitHub renderer stands in for it */
   engine: EngineId;
   /** Whether the palette colors what the view shows, which only the GitHub renderer draws */
   paletteApplies: boolean;
   palette: PaletteId;
-  layout: Layout;
 }
 
-export interface ControlsActions {
-  setEngine(engine: EngineId): void;
-  setPalette(palette: PaletteId): void;
-  setLayout(layout: Layout): void;
+export interface ControlsState {
+  layout: Layout;
+  /** Whether a Split's preview follows the editor's scroll */
+  syncScroll: boolean;
+  /** HTML: whether the page may load resources from the web and its local files */
+  resources?: boolean;
+  /** Markdown's dropdowns; HTML has none */
+  renderer?: RendererState;
 }
+
+/** The panel kind, and what choosing in its controls does */
+export type ControlsSetup =
+  | {
+      kind: "markdown";
+      setLayout(layout: Layout): void;
+      setSyncScroll(on: boolean): void;
+      setEngine(engine: EngineId): void;
+      setPalette(palette: PaletteId): void;
+    }
+  | { kind: "html"; setLayout(layout: Layout): void; setSyncScroll(on: boolean): void; setResources(on: boolean): void };
+
+type ToggleName = "syncScroll" | "resources";
 
 /** Geometry of Paseo's control as laid out, so the stand-in matches it at any UI scale */
 interface SegmentLook {
@@ -54,6 +82,9 @@ const DEFAULT_LOOK: SegmentLook = {
 };
 
 const PALETTE_ONLY_GITHUB = "Palettes color the GitHub renderer; Paseo's renderer shows Paseo's theme";
+const SYNC_TITLE = "In Split, the preview follows the editor's scroll";
+const RESOURCES_TITLE =
+  "Lets the page load from the web and load the local files it references (images, stylesheets, scripts, fonts, media). The page stays isolated from Paseo, but can send what it loads to the web.";
 
 /** A dropdown and the caption before it, which narrow toolbars drop before the dropdown */
 interface Field<Id extends string> {
@@ -128,19 +159,20 @@ function createField<Id extends string>(
 
 export class ToolbarControls {
   readonly element: HTMLDivElement;
-  private readonly actions: ControlsActions;
-  private readonly renderer: Field<EngineId>;
-  private readonly palette: Field<PaletteId>;
+  /** Markdown's renderer and palette dropdowns; null for HTML */
+  private readonly fields: { renderer: Field<EngineId>; palette: Field<PaletteId> } | null;
   private readonly segments = new Map<Layout, { segment: HTMLDivElement; label: HTMLSpanElement }>();
+  /** On/off toggles styled as single segments: scroll sync, and HTML's resources */
+  private readonly toggles = new Map<ToggleName, { element: HTMLDivElement; label: HTMLSpanElement }>();
   private shown: ControlsState | null = null;
 
   /** `original` is Paseo's Preview | Source control (`file-preview-mode`), or null outside a panel */
-  constructor(original: HTMLElement | null, actions: ControlsActions) {
-    this.actions = actions;
+  constructor(original: HTMLElement | null, setup: ControlsSetup) {
+    const { kind } = setup;
     const look = measure(original);
 
     this.element = document.createElement("div");
-    this.element.setAttribute("data-markdown-enhancements-controls", "");
+    this.element.setAttribute(`data-${kind}-enhancements-controls`, "");
     this.element.style.cssText = [
       "display:flex",
       "align-items:center",
@@ -154,22 +186,64 @@ export class ToolbarControls {
       "-webkit-app-region:no-drag",
     ].join(";");
 
-    this.renderer = createField("Renderer", "markdown-enhancements-engine", ENGINE_IDS, ENGINES, (engine) =>
-      this.actions.setEngine(engine),
-    );
-    this.palette = createField("Palette", "markdown-enhancements-palette", PALETTE_IDS, PALETTES, (palette) =>
-      this.actions.setPalette(palette),
-    );
-    this.element.append(this.renderer.element, this.palette.element);
+    if (setup.kind === "markdown") {
+      this.fields = {
+        renderer: createField("Renderer", "markdown-enhancements-engine", ENGINE_IDS, ENGINES, (engine) =>
+          setup.setEngine(engine),
+        ),
+        palette: createField("Palette", "markdown-enhancements-palette", PALETTE_IDS, PALETTES, (palette) =>
+          setup.setPalette(palette),
+        ),
+      };
+      this.element.append(this.fields.renderer.element, this.fields.palette.element);
+    } else {
+      this.fields = null;
+    }
+
+    const addToggle = (name: ToggleName, text: string, title: string, set: (on: boolean) => void) => {
+      const element = document.createElement("div");
+      element.setAttribute("data-testid", `${kind}-enhancements-${name === "syncScroll" ? "sync-scroll" : name}`);
+      element.setAttribute("role", "button");
+      element.setAttribute("tabindex", "0");
+      element.title = title;
+      element.style.cssText = [
+        "display:flex",
+        "align-items:center",
+        "justify-content:center",
+        "flex-shrink:0",
+        "box-sizing:border-box",
+        "cursor:pointer",
+        `padding:${look.padding}`,
+        `min-height:${look.minHeight}`,
+        `border-radius:${look.borderRadius}`,
+      ].join(";");
+      const label = document.createElement("span");
+      label.textContent = text;
+      label.style.cssText = `white-space:nowrap;font-size:${look.fontSize};line-height:${look.lineHeight};`;
+      element.appendChild(label);
+      const toggle = () => set(this.shown?.[name] !== true);
+      element.addEventListener("mouseenter", () => this.paintToggle(name, true));
+      element.addEventListener("mouseleave", () => this.paintToggle(name, false));
+      element.addEventListener("click", toggle);
+      element.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        toggle();
+      });
+      this.element.appendChild(element);
+      this.toggles.set(name, { element, label });
+    };
+    if (setup.kind === "html") addToggle("resources", "Resources", RESOURCES_TITLE, (on) => setup.setResources(on));
+    addToggle("syncScroll", "Sync scroll", SYNC_TITLE, (on) => setup.setSyncScroll(on));
 
     const layoutControl = document.createElement("div");
-    layoutControl.setAttribute("data-testid", "markdown-enhancements-layout");
+    layoutControl.setAttribute("data-testid", `${kind}-enhancements-layout`);
     layoutControl.setAttribute("role", "group");
-    layoutControl.setAttribute("aria-label", "Markdown view");
+    layoutControl.setAttribute("aria-label", GROUP_LABELS[kind]);
     layoutControl.style.cssText = `display:flex;align-items:center;flex-shrink:0;gap:${look.containerGap};min-height:${look.containerMinHeight};`;
-    for (const { value, label: text, title } of LAYOUTS) {
+    for (const { value, label: text, title } of LAYOUTS[kind]) {
       const segment = document.createElement("div");
-      segment.setAttribute("data-testid", `markdown-enhancements-layout-${value}`);
+      segment.setAttribute("data-testid", `${kind}-enhancements-layout-${value}`);
       segment.setAttribute("role", "button");
       segment.setAttribute("tabindex", "0");
       segment.title = title;
@@ -190,11 +264,11 @@ export class ToolbarControls {
       segment.appendChild(label);
       segment.addEventListener("mouseenter", () => this.paintSegment(value, true));
       segment.addEventListener("mouseleave", () => this.paintSegment(value, false));
-      segment.addEventListener("click", () => this.actions.setLayout(value));
+      segment.addEventListener("click", () => setup.setLayout(value));
       segment.addEventListener("keydown", (event) => {
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
-        this.actions.setLayout(value);
+        setup.setLayout(value);
       });
       layoutControl.appendChild(segment);
       this.segments.set(value, { segment, label });
@@ -206,44 +280,62 @@ export class ToolbarControls {
   update(state: ControlsState): void {
     const shown = this.shown;
     this.shown = state;
-    if (shown?.engine !== state.engine) {
-      this.renderer.select.value = state.engine;
-      this.renderer.select.title = `Renderer: ${ENGINES[state.engine].title}`;
-    }
-    if (shown?.palette !== state.palette || shown?.paletteApplies !== state.paletteApplies) {
-      const applies = state.paletteApplies;
-      const { element, select } = this.palette;
-      select.disabled = !applies;
-      // Paseo's renderer draws in Paseo's theme, whichever palette is chosen
-      select.value = applies ? state.palette : "paseo";
-      select.style.cursor = applies ? "pointer" : "default";
-      select.title = applies ? `Palette: ${PALETTES[state.palette].title}` : PALETTE_ONLY_GITHUB;
-      element.style.opacity = applies ? "" : "0.5";
-      element.title = applies ? "" : PALETTE_ONLY_GITHUB;
+    const fields = this.fields;
+    const renderer = state.renderer;
+    if (fields && renderer) {
+      const before = shown?.renderer;
+      if (before?.engine !== renderer.engine) {
+        fields.renderer.select.value = renderer.engine;
+        fields.renderer.select.title = `Renderer: ${ENGINES[renderer.engine].title}`;
+      }
+      if (before?.palette !== renderer.palette || before?.paletteApplies !== renderer.paletteApplies) {
+        const applies = renderer.paletteApplies;
+        const { element, select } = fields.palette;
+        select.disabled = !applies;
+        // Paseo's renderer draws in Paseo's theme, whichever palette is chosen
+        select.value = applies ? renderer.palette : "paseo";
+        select.style.cursor = applies ? "pointer" : "default";
+        select.title = applies ? `Palette: ${PALETTES[renderer.palette].title}` : PALETTE_ONLY_GITHUB;
+        element.style.opacity = applies ? "" : "0.5";
+        element.title = applies ? "" : PALETTE_ONLY_GITHUB;
+      }
     }
     if (shown?.layout !== state.layout) {
       for (const value of this.segments.keys()) this.paintSegment(value, false);
     }
+    for (const name of this.toggles.keys()) if (shown?.[name] !== state[name]) this.paintToggle(name, false);
   }
 
   /**
    * Drops the dropdowns' captions, then the palette dropdown, then the renderer dropdown, until
    * `row` (the bar holding them) stops overflowing, so Preview | Split | Source keeps its place in
-   * narrow panes
+   * narrow panes. HTML's controls are Preview | Split | Source alone.
    */
   fitTo(row: HTMLElement): void {
+    const fields = this.fields;
+    if (!fields) return;
     for (const [captions, palette, renderer] of [
       ["", "", ""],
       ["none", "", ""],
       ["none", "none", ""],
       ["none", "none", "none"],
     ]) {
-      this.renderer.caption.style.display = captions;
-      this.palette.caption.style.display = captions;
-      this.palette.element.style.display = palette;
-      this.renderer.element.style.display = renderer;
+      fields.renderer.caption.style.display = captions;
+      fields.palette.caption.style.display = captions;
+      fields.palette.element.style.display = palette;
+      fields.renderer.element.style.display = renderer;
       if (row.scrollWidth <= row.clientWidth) return;
     }
+  }
+
+  /** On: surface3 and foreground, as a selected segment; hovered: surface2; else muted */
+  private paintToggle(name: ToggleName, hovered: boolean): void {
+    const parts = this.toggles.get(name);
+    if (!parts) return;
+    const on = this.shown?.[name] === true;
+    parts.element.setAttribute("aria-pressed", String(on));
+    parts.element.style.backgroundColor = on ? "var(--colors-surface3)" : hovered ? "var(--colors-surface2)" : "transparent";
+    parts.label.style.color = on ? "var(--colors-foreground)" : "var(--colors-foreground-muted)";
   }
 
   /** Selected: surface3 and foreground; hovered: surface2; else muted text on no fill */

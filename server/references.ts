@@ -73,3 +73,29 @@ export function candidatePaths(reference: string, context: ReferenceContext): st
 export function imageMimeType(file: string): string | null {
   return IMAGE_MIME_TYPES[path.extname(file).toLowerCase()] ?? null;
 }
+
+/** What an HTML page may load besides images, by extension; anything else loads as plain bytes */
+const RESOURCE_MIME_TYPES: Readonly<Record<string, string>> = {
+  ...IMAGE_MIME_TYPES,
+  ".css": "text/css",
+  ".js": "text/javascript",
+  ".mjs": "text/javascript",
+  ".json": "application/json",
+  ".txt": "text/plain",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".ttf": "font/ttf",
+  ".otf": "font/otf",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".m4a": "audio/mp4",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".vtt": "text/vtt",
+};
+
+/** The MIME type an HTML page's local resource is served as */
+export function resourceMimeType(file: string): string {
+  return RESOURCE_MIME_TYPES[path.extname(file).toLowerCase()] ?? "application/octet-stream";
+}

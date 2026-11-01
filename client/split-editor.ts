@@ -4,10 +4,9 @@
 // that same buffer. Edits reach Paseo's preview, autosave, and conflict handling as they would from
 // Source; changes the buffer takes from disk come back into the editor.
 import { type CmView, type CompanionEditor, createCompanionEditor } from "./companion-editor";
+import { createDivider } from "./divider";
 import { type EditorScrollPosition, editorScrollPosition } from "./editor-scroll";
 import type { EditorModel } from "./fiber";
-
-const DIVIDER_WIDTH_PX = 6;
 
 export interface SplitEditorActions {
   /** The divider moved to `ratio` of the panel width */
@@ -21,7 +20,6 @@ export class SplitEditor {
   readonly element: HTMLDivElement;
   private readonly editor: CompanionEditor;
   private readonly actions: SplitEditorActions;
-  private readonly divider: HTMLDivElement;
   private readonly unsubscribe: () => void;
   private readonly scroller: HTMLElement | null;
   /** The buffer as this editor last wrote or loaded it */
@@ -49,21 +47,7 @@ export class SplitEditor {
     host.style.cssText = "position:relative;flex:1 1 auto;min-width:0;display:flex;flex-direction:column;";
     this.element.appendChild(host);
 
-    this.divider = document.createElement("div");
-    this.divider.setAttribute("role", "separator");
-    this.divider.setAttribute("aria-orientation", "vertical");
-    this.divider.setAttribute("title", "Drag to resize");
-    this.divider.style.cssText = [
-      `flex:0 0 ${DIVIDER_WIDTH_PX}px`,
-      "cursor:col-resize",
-      "background:var(--colors-surface0)",
-      "border-right:1px solid var(--colors-border)",
-      "box-sizing:border-box",
-      "-webkit-app-region:no-drag",
-      "touch-action:none",
-    ].join(";");
-    this.divider.addEventListener("pointerdown", this.startResize);
-    this.element.appendChild(this.divider);
+    this.element.appendChild(createDivider("right", (ratio) => this.actions.resizeSplit(ratio)));
 
     let editor: CompanionEditor | null = null;
     editor = createCompanionEditor({
@@ -136,30 +120,5 @@ export class SplitEditor {
       const position = this.position();
       if (position) this.actions.scrolled(position);
     });
-  };
-
-  private readonly startResize = (event: PointerEvent) => {
-    const panel = this.element.parentElement;
-    if (!panel || event.button !== 0) return;
-    event.preventDefault();
-    const divider = this.divider;
-    divider.setPointerCapture(event.pointerId);
-    // The editor and preview would otherwise take the pointer and select text while dragging
-    const shield = document.createElement("div");
-    shield.style.cssText = "position:fixed;inset:0;cursor:col-resize;z-index:2147483647;";
-    document.body.appendChild(shield);
-    const move = (moveEvent: PointerEvent) => {
-      const bounds = panel.getBoundingClientRect();
-      if (bounds.width > 0) this.actions.resizeSplit((moveEvent.clientX - bounds.left) / bounds.width);
-    };
-    const end = () => {
-      shield.remove();
-      divider.removeEventListener("pointermove", move);
-      divider.removeEventListener("pointerup", end);
-      divider.removeEventListener("pointercancel", end);
-    };
-    divider.addEventListener("pointermove", move);
-    divider.addEventListener("pointerup", end);
-    divider.addEventListener("pointercancel", end);
   };
 }

@@ -45,7 +45,16 @@ export interface PanelFile {
   watch(listener: (event: { type: string }) => void): () => void;
 }
 
-export interface MarkdownPanelInfo {
+/** The built-in panels with a Preview, which share Paseo's text file panel and its toolbar */
+export type PanelKind = "markdown" | "html";
+
+const PANEL_KINDS: Readonly<Record<string, PanelKind>> = {
+  "builtin:markdown": "markdown",
+  "builtin:html": "html",
+};
+
+export interface TextPanelInfo {
+  kind: PanelKind;
   path: string;
   workspaceId: string;
   serverId: string;
@@ -125,10 +134,10 @@ function editorModelOf(fiber: Fiber): EditorModel | null {
 }
 
 /**
- * The built-in Markdown panel above a `file-panel-bar` toolbar, or null for every other panel
- * (Source, HTML, plugin panels) and for anything unrecognizable.
+ * The built-in Markdown or HTML panel above a `file-panel-bar` toolbar, or null for every other
+ * panel (Source, plugin panels) and for anything unrecognizable.
  */
-export function findMarkdownPanel(bar: object): MarkdownPanelInfo | null {
+export function findTextPanel(bar: object): TextPanelInfo | null {
   let model: EditorModel | null = null;
   for (const fiber of ancestors(bar, MAX_PANEL_DEPTH)) {
     const props = fiber.memoizedProps;
@@ -138,11 +147,12 @@ export function findMarkdownPanel(bar: object): MarkdownPanelInfo | null {
     // BuiltinFilePanelView: props { panel: { id }, file, params, workspaceId, host }
     const panel = props.panel;
     if (!isObject(panel) || typeof panel.id !== "string") continue;
-    if (panel.id !== "builtin:markdown") return null;
+    const kind = PANEL_KINDS[panel.id];
+    if (!kind) return null;
     const { file, params, workspaceId, host } = props;
     if (!isPanelFile(file) || !isObject(params) || typeof params.path !== "string") return null;
     if (typeof workspaceId !== "string" || !isObject(host) || typeof host.id !== "string") return null;
-    return { path: params.path, workspaceId, serverId: host.id, file, model };
+    return { kind, path: params.path, workspaceId, serverId: host.id, file, model };
   }
   return null;
 }

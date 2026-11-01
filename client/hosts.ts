@@ -29,6 +29,8 @@ export interface HostBackend {
   /** Whether this host has the workspace */
   ownsWorkspace(workspaceId: string): Promise<boolean>;
   readImage(request: ReferenceRequest): Promise<{ mimeType: string; base64: string }>;
+  /** A local file an HTML page references, relative to the page (`markdownPath`) */
+  readResource(request: ReferenceRequest): Promise<{ mimeType: string; base64: string }>;
   resolveLink(request: ReferenceRequest): Promise<{ path: string | null; kind: "file" | "directory" | null }>;
   openExternal(url: string): Promise<void>;
   readFile(request: FileRequest): Promise<FileContent>;

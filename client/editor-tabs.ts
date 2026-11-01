@@ -1,7 +1,7 @@
 // Tab strip and Source editor features for the whole window: pinned tabs, the per-pane LRU limit,
 // gutter line references, and tearing file tabs out into companion windows. Re-syncs on layout
 // store changes and DOM changes, since the strips and editors render as app UI.
-import { companionMarkdownFactory } from "./companion-markdown";
+import { companionPreviewFactory } from "./companion-preview";
 import { findAncestorProps, type StoreApi } from "./fiber";
 import type { GfmEngine } from "./gfm-engine";
 import { installGutterSelection } from "./gutter-select";
@@ -95,7 +95,7 @@ export function startEditorTabs(registry: HostRegistry, engine: GfmEngine): () =
     writeFile: async (workspaceId, path, content, expectedHash) =>
       (await backend(workspaceId)).writeFile({ workspaceId, path, content, expectedHash }),
     // Links in a companion's Markdown preview open in the main window
-    markdown: companionMarkdownFactory(registry, engine, (file, lineStart, lineEnd) =>
+    previews: companionPreviewFactory(registry, engine, (file, lineStart, lineEnd) =>
       openTarget(file.serverId, file.workspaceId, { kind: "file", path: file.path, lineStart, lineEnd }),
     ),
   });

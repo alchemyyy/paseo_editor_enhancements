@@ -1,34 +1,40 @@
-// Markdown in a companion window: the same renderer and palette dropdowns and Preview | Split |
-// Source as the main window's Markdown toolbar, for one companion tab. Paseo's own preview exists
-// only in the main window, so companion windows render with the GitHub renderer, and say so when
-// Paseo's renderer is chosen. The tab's editor stays mounted; Preview hides it and Split narrows
-// it, with the preview beside it fed from the editor's unsaved text. Preferences are shared with
-// the main window.
+// Markdown and HTML in a companion window: the same Preview | Split | Source as the main window's
+// toolbar, and for Markdown its renderer and palette dropdowns, for one companion tab. Paseo's own
+// previews exist only in the main window, so companion windows render Markdown with the GitHub
+// renderer, saying so when Paseo's renderer is chosen, and HTML in the plugin's sandboxed page. The
+// tab's editor stays mounted; Preview hides it and Split narrows it, with the preview beside it fed
+// from the editor's unsaved text. Preferences are shared with the main window.
 import { type Layout, ToolbarControls } from "./controls";
 import { editorScrollPosition } from "./editor-scroll";
+import type { PanelKind } from "./fiber";
 import type { GfmEngine } from "./gfm-engine";
 import { backendFor, type HostRegistry } from "./hosts";
+import { HtmlPage } from "./html-page";
 import { imageUrl } from "./images";
 import { paseoColorScheme, paseoVariablesRule } from "./palettes";
-import { markdownPrefs } from "./prefs";
+import { opensInSplit, previewPrefs, splitChoice, syncChoice, syncsScroll } from "./prefs";
 import { PreviewPane } from "./preview";
 import { classifyReference, splitLocalTarget } from "./references";
 import { watchPaseoTheme } from "./theme-watch";
 
-const MARKDOWN_PATH = /\.(md|markdown)$/i;
+/** The files Paseo gives a Preview, by extension as its file panel catalog matches them */
+const PREVIEW_PATHS: readonly (readonly [PanelKind, RegExp])[] = [
+  ["markdown", /\.(md|markdown)$/i],
+  ["html", /\.html?$/i],
+];
 const VARIABLES_STYLE_ATTRIBUTE = "data-markdown-enhancements-variables";
 const PASEO_RENDERER_NOTICE =
   "Paseo's renderer runs only in Paseo's main window, so the GitHub renderer shows this window's preview.";
 
-export interface CompanionMarkdownFile {
+export interface CompanionPreviewFile {
   serverId: string;
   workspaceId: string;
   /** The tab's path, workspace-relative or absolute */
   path: string;
 }
 
-export interface CompanionMarkdownInput {
-  file: CompanionMarkdownFile;
+export interface CompanionPreviewInput {
+  file: CompanionPreviewFile;
   /** The tab's content area; its first child is the editor (or read-only rows) */
   container: HTMLElement;
   /** The tab's current text, unsaved edits included */
@@ -37,7 +43,7 @@ export interface CompanionMarkdownInput {
   layout: Layout | null;
 }
 
-export interface CompanionMarkdown {
+export interface CompanionPreview {
   /** The toolbar controls, for the companion's info bar while this tab is active */
   readonly controls: HTMLElement;
   readonly layout: Layout;
@@ -48,11 +54,7 @@ export interface CompanionMarkdown {
   dispose(): void;
 }
 
-export type CompanionMarkdownFactory = (input: CompanionMarkdownInput) => CompanionMarkdown | null;
-
-export function isMarkdownPath(path: string): boolean {
-  return MARKDOWN_PATH.test(path);
-}
+export type CompanionPreviewFactory = (input: CompanionPreviewInput) => CompanionPreview | null;
 
 /** Paseo's theme variables in a companion document, which the app's stylesheets do not reach */
 function syncVariables(doc: Document): void {
@@ -67,30 +69,32 @@ function syncVariables(doc: Document): void {
 }
 
 /**
- * Builds the Markdown controls and preview for companion tabs. `openFile` shows a linked file in
- * the main window.
+ * Builds the controls and preview for companion tabs of Markdown and HTML files. `openFile` shows
+ * a file a Markdown link points to in the main window.
  */
-export function companionMarkdownFactory(
+export function companionPreviewFactory(
   registry: HostRegistry,
   engine: GfmEngine,
-  openFile: (file: CompanionMarkdownFile, lineStart?: number, lineEnd?: number) => void,
-): CompanionMarkdownFactory {
+  openFile: (file: CompanionPreviewFile, lineStart?: number, lineEnd?: number) => void,
+): CompanionPreviewFactory {
   return (input) => {
-    if (!isMarkdownPath(input.file.path)) return null;
-    const prefs = markdownPrefs();
+    const kind = PREVIEW_PATHS.find(([, pattern]) => pattern.test(input.file.path))?.[0];
+    if (!kind) return null;
+    const prefs = previewPrefs();
     const { file, container } = input;
     const doc = container.ownerDocument;
     const backend = () => backendFor(registry, file.workspaceId);
     const reference = (value: string) => ({ workspaceId: file.workspaceId, markdownPath: file.path, reference: value });
-    let layout: Layout = input.layout ?? (prefs.get().openInSplit ? "split" : "preview");
-    let preview: PreviewPane | null = null;
+    let layout: Layout = input.layout ?? (opensInSplit(prefs.get(), kind) ? "split" : "preview");
+    let preview: PreviewPane | HtmlPage | null = null;
     let scroller: HTMLElement | null = null;
     let restyled: { element: HTMLElement; display: string; width: string } | null = null;
     let disposed = false;
     let fitRow: HTMLElement | null = null;
 
     const follow = () => {
-      if (layout === "split" && scroller && preview) preview.follow(editorScrollPosition(scroller));
+      if (layout !== "split" || !scroller || !preview || !syncsScroll(prefs.get(), kind)) return;
+      preview.follow(editorScrollPosition(scroller));
     };
     let followFrame = false;
     const onEditorScroll = () => {
@@ -110,8 +114,19 @@ export function companionMarkdownFactory(
       if (scroller) onEditorScroll();
     };
 
-    const createPreview = () =>
-      new PreviewPane(
+    const createPreview = (): PreviewPane | HtmlPage => {
+      const resizeSplit = (ratio: number) => prefs.update({ splitRatio: ratio });
+      if (kind === "html") {
+        return new HtmlPage({
+          resizeSplit,
+          readResource: async (value) => {
+            const host = await backend();
+            if (!host) throw new Error("No Paseo host has this workspace");
+            return host.readResource(reference(value));
+          },
+        });
+      }
+      return new PreviewPane(
         {
           imageUrl: (value) =>
             imageUrl(`${file.serverId}|${file.workspaceId}|${file.path}|${value}`, value, async (source) => {
@@ -132,11 +147,12 @@ export function companionMarkdownFactory(
           openExternal: (url) => {
             if (classifyReference(url) === "external") void backend().then((host) => host?.openExternal(url));
           },
-          resizeSplit: (ratio) => prefs.update({ splitRatio: ratio }),
+          resizeSplit,
           rendered: follow,
         },
         engine,
       );
+    };
 
     const restore = () => {
       if (!restyled) return;
@@ -145,21 +161,41 @@ export function companionMarkdownFactory(
       restyled = null;
     };
 
-    const controls = new ToolbarControls(null, {
-      setEngine: (chosen) => prefs.update({ engine: chosen }),
-      setPalette: (palette) => prefs.update({ palette }),
-      setLayout: (next) => {
-        layout = next;
-        prefs.update({ openInSplit: next === "split" });
-        apply();
-      },
-    });
+    const setLayout = (next: Layout) => {
+      layout = next;
+      prefs.update(splitChoice(kind, next));
+      apply();
+    };
+    const setSyncScroll = (on: boolean) => {
+      prefs.update(syncChoice(kind, on));
+      if (on) follow();
+    };
+    const controls =
+      kind === "html"
+        ? new ToolbarControls(null, {
+            kind: "html",
+            setLayout,
+            setSyncScroll,
+            setResources: (on) => prefs.update({ htmlResources: on }),
+          })
+        : new ToolbarControls(null, {
+            kind: "markdown",
+            setEngine: (chosen) => prefs.update({ engine: chosen }),
+            setPalette: (palette) => prefs.update({ palette }),
+            setLayout,
+            setSyncScroll,
+          });
 
     const apply = () => {
       if (disposed) return;
-      const { engine: chosen, palette, splitRatio } = prefs.get();
+      const { engine: chosen, palette, splitRatio, htmlResources: resources } = prefs.get();
       syncVariables(doc);
-      controls.update({ engine: chosen, paletteApplies: true, palette, layout });
+      const syncScroll = syncsScroll(prefs.get(), kind);
+      controls.update(
+        kind === "html"
+          ? { layout, syncScroll, resources }
+          : { layout, syncScroll, renderer: { engine: chosen, paletteApplies: true, palette } },
+      );
       if (fitRow?.contains(controls.element)) controls.fitTo(fitRow);
       let content: HTMLElement | null = null;
       for (const child of Array.from(container.children)) {
@@ -184,10 +220,15 @@ export function companionMarkdownFactory(
       if (!preview) {
         preview = createPreview();
         container.appendChild(preview.element);
+        if (preview instanceof HtmlPage) preview.setResources(resources);
         preview.setText(input.text());
       }
-      preview.setPalette(palette, paseoColorScheme());
-      preview.setNotice(chosen === "paseo" ? PASEO_RENDERER_NOTICE : null);
+      if (preview instanceof PreviewPane) {
+        preview.setPalette(palette, paseoColorScheme());
+        preview.setNotice(chosen === "paseo" ? PASEO_RENDERER_NOTICE : null);
+      } else {
+        preview.setResources(resources);
+      }
       preview.setBounds(0, split ? percent : "0px", split);
       watchScroll(split ? content.querySelector<HTMLElement>(".cm-scroller") : null);
     };

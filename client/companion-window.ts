@@ -1,11 +1,12 @@
 // A tabbed companion window: a tab strip with Save, Reload, and Dock for the active tab, an info
-// bar like the Source panel's toolbar (size, lines, cursor, and for Markdown the theme and
-// Preview | Split | Source controls), and one CodeMirror editor per tab cloned from the file's
-// Source editor. Tabs without a source editor, or for files too large to save, fall back to a
-// read-only view with line rows. Everything runs in the main window's script.
+// bar like the Source panel's toolbar (size, lines, cursor, and for Markdown and HTML the
+// Preview | Split | Source controls, with Markdown's renderer and palette), and one CodeMirror
+// editor per tab cloned from the file's Source editor. Tabs without a source editor, or for files
+// too large to save, fall back to a read-only view with line rows. Everything runs in the main
+// window's script.
 import { type CompanionTheme, createCompanionGutter } from "./companion-gutter";
 import { type CmView, type CompanionEditor, createCompanionEditor } from "./companion-editor";
-import type { CompanionMarkdown, CompanionMarkdownFactory } from "./companion-markdown";
+import type { CompanionPreview, CompanionPreviewFactory } from "./companion-preview";
 import type { Layout } from "./controls";
 import type { FileContent, SaveResult } from "./hosts";
 import { type GutterDocument, installGutterSelection } from "./gutter-select";
@@ -91,7 +92,7 @@ export interface TabSeed {
   file: CompanionFile;
   sourceView: CmView | null;
   moved?: { content: string; savedContent: string; hash: string; size: number; truncated: boolean };
-  /** A Markdown tab's Preview | Split | Source layout in the view it comes from */
+  /** A Markdown or HTML tab's Preview | Split | Source layout in the view it comes from */
   layout?: Layout | null;
 }
 
@@ -123,8 +124,8 @@ export interface CompanionWindowHooks {
    * released outside, "cancel" when it comes back and is released inside
    */
   onTabDrag(window: CompanionWindow, key: string, phase: "move" | "end" | "cancel", screenX: number, screenY: number): void;
-  /** Markdown controls and preview for a tab, or null for other files */
-  markdown?: CompanionMarkdownFactory;
+  /** Preview | Split | Source and the preview for a Markdown or HTML tab, or null for other files */
+  previews?: CompanionPreviewFactory;
 }
 
 const UNSAVED_MARK = "●";
@@ -203,8 +204,8 @@ interface Tab {
   location: string;
   /** The latest text read, for tabs shown as read-only rows */
   content: string;
-  markdown: CompanionMarkdown | null;
-  /** The layout the tab arrived with, for its Markdown controls once its view is built */
+  preview: CompanionPreview | null;
+  /** The layout the tab arrived with, for its preview controls once its view is built */
   arrivedLayout: Layout | null;
 }
 
@@ -259,9 +260,9 @@ export function createCompanionWindow(
   const linesLabel = make("span");
   const message = make("span", { flex: "1", "min-width": "0", overflow: "hidden", "text-overflow": "ellipsis", "white-space": "nowrap", "text-align": "center" });
   const cursorLabel = make("span");
-  // The active Markdown tab's controls; the slot shrinks before the labels do
-  const markdownSlot = make("div", { display: "flex", "align-items": "center", "min-width": "0", "flex-shrink": "1" });
-  info.replaceChildren(sizeLabel, linesLabel, message, cursorLabel, markdownSlot);
+  // The active Markdown or HTML tab's controls; the slot shrinks before the labels do
+  const controlsSlot = make("div", { display: "flex", "align-items": "center", "min-width": "0", "flex-shrink": "1" });
+  info.replaceChildren(sizeLabel, linesLabel, message, cursorLabel, controlsSlot);
   const body = make("div", { flex: "1", "min-height": "0", display: "flex", "flex-direction": "column" });
 
   // One gutter selection install serves every tab's editor in this document
@@ -277,10 +278,10 @@ export function createCompanionWindow(
     cursorLabel.textContent = active.cursor ? `Ln ${active.cursor.line}, Col ${active.cursor.column}` : "";
     message.textContent = active.message || active.location;
     message.style.setProperty("color", active.message ? theme.foreground : theme.muted);
-    const controls = (active.markdown?.controls ?? null) as unknown as Node | null;
-    if (controls && controls.parentElement !== markdownSlot) markdownSlot.replaceChildren(controls);
-    else if (!controls) markdownSlot.replaceChildren();
-    active.markdown?.fit(info as unknown as HTMLElement);
+    const controls = (active.preview?.controls ?? null) as unknown as Node | null;
+    if (controls && controls.parentElement !== controlsSlot) controlsSlot.replaceChildren(controls);
+    else if (!controls) controlsSlot.replaceChildren();
+    active.preview?.fit(info as unknown as HTMLElement);
   };
 
   const renderChip = (tab: Tab) => {
@@ -321,12 +322,12 @@ export function createCompanionWindow(
     }
   };
 
-  /** Builds the tab's view from its first content, then its Markdown controls */
+  /** Builds the tab's view from its first content, then its preview controls */
   const build = (tab: Tab, content: string, savedContent?: string) => {
     tab.content = content;
     buildView(tab, content, savedContent);
-    tab.markdown ??=
-      hooks.markdown?.({
+    tab.preview ??=
+      hooks.previews?.({
         file: { serverId: tab.file.serverId, workspaceId: tab.file.workspaceId, path: tab.file.path },
         container: tab.container as unknown as HTMLElement,
         text: () => (tab.editor ? tab.editor.text() : tab.content),
@@ -353,7 +354,7 @@ export function createCompanionWindow(
           tab.cursor = { line: state.line, column: state.column };
           renderChip(tab);
           if (tab === active) renderInfo();
-          if (state.docChanged) tab.markdown?.textChanged();
+          if (state.docChanged) tab.preview?.textChanged();
         },
       });
       if (tab.editor) return;
@@ -393,7 +394,7 @@ export function createCompanionWindow(
       tab.lines = content.content.split(/\r?\n/).length;
     } else build(tab, content.content);
     tab.content = content.content;
-    tab.markdown?.textChanged();
+    tab.preview?.textChanged();
     renderChip(tab);
     if (tab === active) renderInfo();
   };
@@ -437,7 +438,7 @@ export function createCompanionWindow(
     tabs.splice(index, 1);
     tab.chip.remove();
     tab.container.remove();
-    tab.markdown?.dispose();
+    tab.preview?.dispose();
     tab.editor?.view.destroy();
     if (tabs.length === 0) {
       active = null;
@@ -455,8 +456,8 @@ export function createCompanionWindow(
 
   const dock = async (tab: Tab) => {
     if (tab.editor?.isDirty() && !(await save(tab))) return;
-    // The main window's Markdown panel opens in the layout the tab had here
-    if (tab.markdown) handOffLayout(tab.file.key, tab.markdown.layout);
+    // The main window's Markdown or HTML panel opens in the layout the tab had here
+    if (tab.preview) handOffLayout(tab.file.key, tab.preview.layout);
     tab.file.dock();
     remove(tab);
   };
@@ -539,7 +540,7 @@ export function createCompanionWindow(
       reading: false,
       location: seed.file.path,
       content: "",
-      markdown: null,
+      preview: null,
       arrivedLayout: seed.layout ?? null,
     };
     chip.addEventListener("mousedown", (event: PointerLike) => {
@@ -642,7 +643,7 @@ export function createCompanionWindow(
 
   // Coming back to the window picks up changes made elsewhere
   popup.addEventListener("focus", () => active && refresh(active, false));
-  // The Markdown controls drop parts that no longer fit
+  // The preview controls drop parts that no longer fit
   popup.addEventListener("resize", renderInfo);
   // Closing with unsaved edits saves them; the requests run from the main window
   popup.addEventListener("beforeunload", () => void saveAll());
@@ -677,7 +678,7 @@ export function createCompanionWindow(
         file: tab.file,
         // The tab's own editor carries the source editor's setup on to the next window
         sourceView: tab.editor?.view ?? tab.sourceView,
-        layout: tab.markdown?.layout ?? tab.arrivedLayout,
+        layout: tab.preview?.layout ?? tab.arrivedLayout,
         moved: tab.editor
           ? {
               content: tab.editor.text(),
@@ -707,7 +708,7 @@ export function createCompanionWindow(
       disposed = true;
       releaseGutter();
       for (const tab of tabs) {
-        tab.markdown?.dispose();
+        tab.preview?.dispose();
         tab.editor?.view.destroy();
       }
       tabs.length = 0;

@@ -2,6 +2,7 @@
 // into Paseo nor inherits from it), re-rendered as the text changes. Unchanged blocks keep their
 // DOM, so images, diagrams, math, and scroll position survive edits. Positioned over the panel by
 // the panel controller.
+import { createDivider } from "./divider";
 import type { EditorScrollPosition } from "./editor-scroll";
 import type { GfmEngine } from "./gfm-engine";
 import { GfmPage } from "./gfm-page";
@@ -25,7 +26,6 @@ export interface PreviewActions {
 const LARGE_DOCUMENT = 200_000;
 const RENDER_DELAY_MS = 30;
 const LARGE_RENDER_DELAY_MS = 250;
-const DIVIDER_WIDTH_PX = 6;
 const SOURCE_LINE_PATTERN = new RegExp(` ${SOURCE_LINE_ATTRIBUTE}="\\d+"`, "g");
 
 /** A node's identity for re-rendering: its HTML without its source line, which edits above shift */
@@ -62,20 +62,7 @@ export class PreviewPane {
     this.element.setAttribute("data-markdown-enhancements-preview", "");
     this.element.style.cssText = "position:absolute;right:0;bottom:0;display:flex;z-index:1;";
 
-    this.divider = document.createElement("div");
-    this.divider.setAttribute("role", "separator");
-    this.divider.setAttribute("aria-orientation", "vertical");
-    this.divider.setAttribute("title", "Drag to resize");
-    this.divider.style.cssText = [
-      `flex:0 0 ${DIVIDER_WIDTH_PX}px`,
-      "cursor:col-resize",
-      "background:var(--colors-surface0)",
-      "border-left:1px solid var(--colors-border)",
-      "box-sizing:border-box",
-      "-webkit-app-region:no-drag",
-      "touch-action:none",
-    ].join(";");
-    this.divider.addEventListener("pointerdown", this.startResize);
+    this.divider = createDivider("left", (ratio) => this.actions.resizeSplit(ratio));
     this.element.appendChild(this.divider);
 
     const host = document.createElement("div");
@@ -293,30 +280,4 @@ export class PreviewPane {
     const offset = target.getBoundingClientRect().top - this.scroller.getBoundingClientRect().top;
     this.scroller.scrollTop += offset - 8;
   }
-
-  private readonly startResize = (event: PointerEvent) => {
-    const panel = this.element.parentElement;
-    if (!panel || event.button !== 0) return;
-    event.preventDefault();
-    const divider = this.divider;
-    divider.setPointerCapture(event.pointerId);
-    // The editor and preview would otherwise take the pointer and select text while dragging
-    const shield = document.createElement("div");
-    shield.style.cssText = "position:fixed;inset:0;cursor:col-resize;z-index:2147483647;";
-    // The window showing the preview: the main window, or a companion editor window
-    this.element.ownerDocument.body.appendChild(shield);
-    const move = (moveEvent: PointerEvent) => {
-      const bounds = panel.getBoundingClientRect();
-      if (bounds.width > 0) this.actions.resizeSplit((moveEvent.clientX - bounds.left) / bounds.width);
-    };
-    const end = () => {
-      shield.remove();
-      divider.removeEventListener("pointermove", move);
-      divider.removeEventListener("pointerup", end);
-      divider.removeEventListener("pointercancel", end);
-    };
-    divider.addEventListener("pointermove", move);
-    divider.addEventListener("pointerup", end);
-    divider.addEventListener("pointercancel", end);
-  };
 }

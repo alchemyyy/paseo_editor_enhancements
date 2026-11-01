@@ -5,12 +5,12 @@
 // the companion is DOM built and driven by this window, with no app bundle of its own.
 import type { CompanionTheme } from "./companion-gutter";
 import { type CmView, findEditorView } from "./companion-editor";
-import type { CompanionMarkdownFactory } from "./companion-markdown";
+import type { CompanionPreviewFactory } from "./companion-preview";
 import { type CompanionWindow, createCompanionWindow, type PopupWindow, type TabSeed } from "./companion-window";
 import { findPaneBridge, type StoreApi } from "./fiber";
 import type { FileContent, SaveResult } from "./hosts";
-import { markdownLayoutOf, revealMarkdownSource } from "./markdown-panels";
 import { collectPanes, type LayoutState, type LayoutTab, type TabTarget, tabIdentity } from "./layout";
+import { panelLayoutOf, revealPanelSource } from "./text-panels";
 
 // Narrow structural types for what this module touches; they shadow lib.dom's in this module.
 interface Node {
@@ -233,8 +233,8 @@ export function installTearOut(input: {
   openTarget(serverId: string, workspaceId: string, target: TabTarget): boolean;
   readFile(workspaceId: string, path: string): Promise<FileContent>;
   writeFile(workspaceId: string, path: string, content: string, expectedHash: string): Promise<SaveResult>;
-  /** Markdown controls and preview for companion tabs */
-  markdown?: CompanionMarkdownFactory;
+  /** Markdown and HTML controls and previews for companion tabs */
+  previews?: CompanionPreviewFactory;
 }): { stop(): void; sync(): void } {
   if (!isDesktop()) return { stop: () => {}, sync: () => {} };
   const companions = new Map<CompanionWindow, CompanionTheme>();
@@ -285,7 +285,7 @@ export function installTearOut(input: {
 
   const createCompanion = (popup: PopupWindow, theme: CompanionTheme): CompanionWindow => {
     const companion = createCompanionWindow(popup, theme, {
-      markdown: input.markdown,
+      previews: input.previews,
       onEmpty: (empty) => {
         forget(empty);
         if (!empty.popup.closed) empty.popup.close();
@@ -359,14 +359,14 @@ export function installTearOut(input: {
     const { target } = tab;
     const path = target.path ?? "";
     const key = `${workspaceKey}:${path}`;
-    // A Markdown tab keeps its Preview | Split | Source layout in the companion
-    const layout = markdownLayoutOf(key);
+    // A Markdown or HTML tab keeps its Preview | Split | Source layout in the companion
+    const layout = panelLayoutOf(key);
     // The companion copies the file's own editor, which only exists while its tab shows Source:
-    // a Markdown tab on Preview switches to Source for the moment before it closes
+    // a Markdown or HTML tab on Preview switches to Source for the moment before it closes
     let sourceView = findSourceView(path);
     if (!sourceView) {
       store.getState().focusTab(workspaceKey, tab.tabId);
-      sourceView = await waitForSourceView(path, () => revealMarkdownSource(key));
+      sourceView = await waitForSourceView(path, () => revealPanelSource(key));
     }
     store.getState().closeTab(workspaceKey, tab.tabId);
     return {

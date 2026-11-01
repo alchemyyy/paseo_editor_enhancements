@@ -1,26 +1,30 @@
-// NOTE: App-internal DOM augmentation of Paseo's built-in Markdown file panel
-// (packages/app/src/file-panels: builtin.tsx, source/panel.tsx, source/toolbar.tsx). The toolbar
-// gets a renderer dropdown, a color palette dropdown, and Preview | Split | Source in place of
-// Preview | Source.
+// NOTE: App-internal DOM augmentation of Paseo's built-in Markdown and HTML file panels
+// (packages/app/src/file-panels: builtin.tsx, source/panel.tsx, source/toolbar.tsx), one text file
+// panel with a different Preview. The toolbar gets Preview | Split | Source in place of
+// Preview | Source, and Markdown's also a renderer dropdown and a color palette dropdown.
 //
-//   Paseo renderer   Preview is Paseo's own preview, untouched. Split keeps Paseo's preview on the
-//                    right and puts an editor cloned from Paseo's Source editor (split-editor.ts),
-//                    bound to the panel's buffer, on the left.
-//   GitHub renderer  Preview hides Paseo's preview behind the plugin's gh-gfm-preview rendering
-//                    (preview.ts). Split keeps Paseo's Source editor (its buffer, autosave, and
-//                    conflict handling) on the left, narrowed, with that rendering beside it, fed
-//                    from the unsaved buffer.
+//   Markdown, Paseo renderer   Preview is Paseo's own preview, untouched. Split keeps Paseo's
+//                              preview on the right and puts an editor cloned from Paseo's Source
+//                              editor (split-editor.ts), bound to the panel's buffer, on the left.
+//   Markdown, GitHub renderer  Preview hides Paseo's preview behind the plugin's gh-gfm-preview
+//                              rendering (preview.ts). Split keeps Paseo's Source editor (its
+//                              buffer, autosave, and conflict handling) on the left, narrowed, with
+//                              that rendering beside it, fed from the unsaved buffer.
+//   HTML                       Preview is Paseo's own sandboxed page, untouched. Split keeps Paseo's
+//                              Source editor on the left, narrowed, with the plugin's own sandboxed
+//                              page (html-page.ts) beside it, fed from the unsaved buffer.
 //
-// Where Paseo's renderer cannot show a Split, the GitHub renderer shows it, saying why.
+// Where Paseo's renderer cannot show a Markdown Split, the GitHub renderer shows it, saying why.
 import { type CmView, findEditorView } from "./companion-editor";
 import { type Layout, ToolbarControls } from "./controls";
 import { type EditorScrollPosition, editorScrollPosition, findEditorScroller } from "./editor-scroll";
-import { findMarkdownPanel, findPaneBridge, findSetView, type MarkdownPanelInfo, type SetView, type TextFileView } from "./fiber";
+import { findPaneBridge, findSetView, findTextPanel, type PanelKind, type SetView, type TextFileView, type TextPanelInfo } from "./fiber";
 import type { GfmEngine } from "./gfm-engine";
 import { backendFor, type HostRegistry } from "./hosts";
+import { HtmlPage } from "./html-page";
 import { imageUrl } from "./images";
 import { type EngineId, paseoColorScheme } from "./palettes";
-import { markdownPrefs, takeLayout } from "./prefs";
+import { opensInSplit, previewPrefs, splitChoice, syncChoice, syncsScroll, takeLayout } from "./prefs";
 import { PreviewPane } from "./preview";
 import { classifyReference, splitLocalTarget } from "./references";
 import { SplitEditor } from "./split-editor";
@@ -58,7 +62,7 @@ interface EditorPlace {
 
 interface Panel {
   bar: HTMLElement;
-  info: MarkdownPanelInfo;
+  info: TextPanelInfo;
   setView: SetView;
   /** Paseo's Preview | Source control, hidden behind ours */
   original: HTMLElement;
@@ -67,6 +71,8 @@ interface Panel {
   requestedView: { view: TextFileView; at: number } | null;
   /** The GitHub renderer's rendering, in Preview or beside Paseo's Source editor */
   preview: PreviewPane | null;
+  /** An HTML Split's page, beside Paseo's Source editor */
+  page: HtmlPage | null;
   /** The Paseo renderer's Split editor, beside Paseo's preview */
   splitEditor: SplitEditor | null;
   restyled: Restyled | null;
@@ -107,23 +113,24 @@ function templateIsCurrent(): boolean {
 }
 
 /** Identifies a file across windows, as companion windows do: `serverId:workspaceId:path` */
-function panelKey(info: MarkdownPanelInfo): string {
+function panelKey(info: TextPanelInfo): string {
   return `${info.serverId}:${info.workspaceId}:${info.path}`;
 }
 
-/** Each open Markdown panel's layout and view setter, by panelKey */
+/** Each open Markdown or HTML panel's layout and view setter, by panelKey */
 const openPanels = new Map<string, { layout: Layout; setView: SetView }>();
 
-/** The layout an open Markdown panel shows for `key` (`serverId:workspaceId:path`), if one is open */
-export function markdownLayoutOf(key: string): Layout | null {
+/** The layout an open Markdown or HTML panel shows for `key` (`serverId:workspaceId:path`), if one is open */
+export function panelLayoutOf(key: string): Layout | null {
   return openPanels.get(key)?.layout ?? null;
 }
 
 /**
- * Switches an open Markdown panel to Paseo's Source view, which mounts its editor (a companion
- * window clones it). The panel's layout follows to Source as for any switch Paseo makes itself.
+ * Switches an open Markdown or HTML panel to Paseo's Source view, which mounts its editor (a
+ * companion window clones it). The panel's layout follows to Source as for any switch Paseo makes
+ * itself.
  */
-export function revealMarkdownSource(key: string): void {
+export function revealPanelSource(key: string): void {
   openPanels.get(key)?.setView("source");
 }
 
@@ -161,11 +168,11 @@ function followByRatio(scroller: HTMLElement, position: EditorScrollPosition): v
   scroller.scrollTop = position.atTop ? 0 : position.atBottom ? maximum : position.ratio * maximum;
 }
 
-/** Augments every built-in Markdown panel until the returned stop function runs */
-export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): () => void {
-  const prefs = markdownPrefs();
+/** Augments every built-in Markdown and HTML panel until the returned stop function runs */
+export function startTextPanels(registry: HostRegistry, engine: GfmEngine): () => void {
+  const prefs = previewPrefs();
   const panels = new Map<HTMLElement, Panel>();
-  /** Toolbars of other panels (Source, HTML, plugin panels), never inspected again */
+  /** Toolbars of other panels (Source, plugin panels), never inspected again */
   const ignored = new WeakSet<HTMLElement>();
   /** A look scheduled for after Paseo restyles its editors */
   let settleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -200,10 +207,26 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
     });
   };
 
+  /** A Split's rendering follows the editor's scroll, while scroll sync is on for the panel's kind */
   const followEditor = (panel: Panel) => {
-    if (panel.layout === "split" && panel.editorScroller && panel.preview) {
-      panel.preview.follow(editorScrollPosition(panel.editorScroller));
+    if (panel.layout !== "split" || !syncsScroll(prefs.get(), panel.info.kind)) return;
+    const rendering = panel.preview ?? panel.page;
+    if (panel.editorScroller && rendering) {
+      rendering.follow(editorScrollPosition(panel.editorScroller));
+      return;
     }
+    // The Paseo renderer's Split: Paseo's preview follows the copied editor
+    const position = panel.splitEditor?.position();
+    if (!position) return;
+    if (!panel.paseoScroller?.isConnected) panel.paseoScroller = panel.restyled ? findScrollContainer(panel.restyled.element) : null;
+    if (panel.paseoScroller) followByRatio(panel.paseoScroller, position);
+  };
+
+  /** Turns scroll sync on or off for every panel of `kind`; turned on, Splits follow at once */
+  const setSyncScroll = (kind: PanelKind, on: boolean) => {
+    prefs.update(syncChoice(kind, on));
+    if (!on) return;
+    for (const panel of panels.values()) if (panel.info.kind === kind) followEditor(panel);
   };
 
   const handleEditorScroll = new WeakMap<Panel, () => void>();
@@ -228,11 +251,11 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
     next();
   };
 
-  /** Feeds the preview the editor buffer, unsaved edits included, or the file for read-only panels */
-  const followText = (panel: Panel, preview: PreviewPane) => {
+  /** Feeds a rendering the editor buffer, unsaved edits included, or the file for read-only panels */
+  const followText = (panel: Panel, rendering: { setText(text: string): void }) => {
     const { model, file } = panel.info;
     if (model) {
-      const update = () => preview.setText(model.getSnapshot().content);
+      const update = () => rendering.setText(model.getSnapshot().content);
       const unsubscribe = model.subscribe(update);
       update();
       return unsubscribe;
@@ -240,7 +263,7 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
     let stopped = false;
     const read = () =>
       void file.readText().then(
-        (text) => !stopped && preview.setText(text),
+        (text) => !stopped && rendering.setText(text),
         () => undefined,
       );
     const unwatch = file.watch(read);
@@ -273,12 +296,15 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
       engine,
     );
 
-  const removePreview = (panel: Panel) => {
+  /** Removes the plugin's rendering of a panel: the GitHub renderer's, or an HTML Split's page */
+  const removeRendering = (panel: Panel) => {
     panel.stopText?.();
     panel.stopText = null;
     watchEditorScroll(panel, null);
     panel.preview?.destroy();
     panel.preview = null;
+    panel.page?.destroy();
+    panel.page = null;
   };
 
   const removeSplitEditor = (panel: Panel) => {
@@ -328,9 +354,16 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
       ? "preview"
       : "source";
 
+  /** The view Paseo's panel shows under the panel's layout and, for Markdown, the renderer shown */
+  const wantedView = (panel: Panel): TextFileView => {
+    // HTML's Split narrows Paseo's Source editor; its Preview is Paseo's own
+    if (panel.info.kind === "html") return panel.layout === "preview" ? "preview" : "source";
+    return viewFor(panel.layout, engineFor(panel, prefs.get().engine).engine);
+  };
+
   /** Asks Paseo for the view a panel's layout and renderer show */
   const requestView = (panel: Panel) => {
-    const wanted = viewFor(panel.layout, engineFor(panel, prefs.get().engine).engine);
+    const wanted = wantedView(panel);
     if (currentView(panel) === wanted) return;
     panel.requestedView = { view: wanted, at: Date.now() };
     panel.setView(wanted);
@@ -339,27 +372,81 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
   const setLayout = (panel: Panel, layout: Layout) => {
     panel.layout = layout;
     panel.copyFailure = null;
-    prefs.update({ openInSplit: layout === "split" });
+    prefs.update(splitChoice(panel.info.kind, layout));
     reconcile(panel);
   };
 
   /** Picks up the buffer of a panel whose toolbar showed before its editable view held one */
   const refreshModel = (panel: Panel) => {
-    const model = findMarkdownPanel(panel.bar)?.model;
+    const model = findTextPanel(panel.bar)?.model;
     if (!model) return;
     panel.info = { ...panel.info, model };
-    // A preview fed from the file on disk follows the buffer from now on
-    if (panel.preview) {
+    // A rendering fed from the file on disk follows the buffer from now on
+    const rendering = panel.preview ?? panel.page;
+    if (rendering) {
       panel.stopText?.();
-      panel.stopText = followText(panel, panel.preview);
+      panel.stopText = followText(panel, rendering);
     }
   };
 
   /** Paseo's Source editor of the panel, when it shows one */
   const liveEditor = (content: HTMLElement | null): CmView | null => (content ? findEditorView(content) : null);
 
+  /**
+   * HTML: Paseo's Source as it is; Split narrows the Source editor, the page beside it. Preview is
+   * Paseo's own, unless the page may load resources: Paseo's preview cannot, so the plugin's page
+   * covers it.
+   */
+  const reconcileHtml = (
+    panel: Panel,
+    shownView: TextFileView,
+    chrome: HTMLElement | null,
+    container: HTMLElement | null,
+    content: HTMLElement | null,
+  ) => {
+    let view = shownView;
+    const wanted = wantedView(panel);
+    if (view !== wanted && !panel.requestedView) {
+      requestView(panel);
+      view = currentView(panel);
+    }
+    const { splitRatio, htmlResources: resources } = prefs.get();
+    panel.seenView = view;
+    panel.controls.update({ layout: panel.layout, syncScroll: syncsScroll(prefs.get(), "html"), resources });
+    openPanels.set(panelKey(panel.info), { layout: panel.layout, setView: panel.setView });
+    fitControls(panel, `${panel.bar.clientWidth}|${view}`);
+
+    const settled = view === wanted;
+    const split = panel.layout === "split";
+    const showsPage = split || (panel.layout === "preview" && resources);
+    if (!settled || !showsPage || !chrome || !container || !content) {
+      if (settled) restore(panel);
+      removeRendering(panel);
+      return;
+    }
+    const percent = `${(splitRatio * 100).toFixed(2)}%`;
+    restyle(panel, content, split ? { width: percent } : { display: "none" });
+    if (!panel.page) {
+      panel.page = new HtmlPage({
+        resizeSplit: (ratio) => prefs.update({ splitRatio: ratio }),
+        readResource: async (value) => {
+          const host = await backend(panel);
+          if (!host) throw new Error("No Paseo host has this workspace");
+          return host.readResource(reference(panel, value));
+        },
+      });
+      container.appendChild(panel.page.element);
+      panel.page.setResources(resources);
+      panel.stopText = followText(panel, panel.page);
+    } else if (panel.page.element.parentElement !== container) {
+      container.appendChild(panel.page.element);
+    }
+    panel.page.setResources(resources);
+    panel.page.setBounds(chrome.offsetHeight, split ? percent : "0px", split);
+    watchEditorScroll(panel, split ? findEditorScroller(content) : null);
+  };
+
   const reconcile = (panel: Panel) => {
-    const { engine: chosen, palette, splitRatio } = prefs.get();
     if (!panel.info.model) refreshModel(panel);
     let view = currentView(panel);
     const request = panel.requestedView;
@@ -372,14 +459,20 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
       panel.carry = null;
     }
     const chrome = panel.bar.parentElement;
-    const container = chrome?.parentElement;
+    const container = chrome?.parentElement ?? null;
     let content: HTMLElement | null = null;
     for (let node = chrome?.nextElementSibling ?? null; node; node = node.nextElementSibling) {
-      if (node !== panel.preview?.element && node !== panel.splitEditor?.element && node instanceof HTMLElement) {
+      const ours = node === panel.preview?.element || node === panel.page?.element || node === panel.splitEditor?.element;
+      if (!ours && node instanceof HTMLElement) {
         content = node;
         break;
       }
     }
+    if (panel.info.kind === "html") {
+      reconcileHtml(panel, view, chrome, container, content);
+      return;
+    }
+    const { engine: chosen, palette, splitRatio } = prefs.get();
 
     // An editor copied before Paseo's theme changed shows the old colors; copy one in the new theme
     if (panel.splitEditor && !templateIsCurrent()) removeSplitEditor(panel);
@@ -417,7 +510,11 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
       view = currentView(panel);
     }
     panel.seenView = view;
-    panel.controls.update({ engine: chosen, paletteApplies: shown === "github", palette, layout: panel.layout });
+    panel.controls.update({
+      layout: panel.layout,
+      syncScroll: syncsScroll(prefs.get(), "markdown"),
+      renderer: { engine: chosen, paletteApplies: shown === "github", palette },
+    });
     openPanels.set(panelKey(panel.info), { layout: panel.layout, setView: panel.setView });
     fitControls(panel, `${panel.bar.clientWidth}|${view}|${shown}`);
 
@@ -428,22 +525,19 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
     const paseoSplit = shown === "paseo" && split && view === "preview" && templateIsCurrent();
     if (!settled || !chrome || !container || !content || (!githubPreview && !paseoSplit)) {
       if (settled) restore(panel);
-      removePreview(panel);
+      removeRendering(panel);
       removeSplitEditor(panel);
       return;
     }
 
     if (paseoSplit) {
-      removePreview(panel);
+      removeRendering(panel);
       const { model } = panel.info;
       if (!panel.splitEditor && model && template) {
         try {
           panel.splitEditor = new SplitEditor(template.view, model, panel.carry, {
             resizeSplit: (ratio) => prefs.update({ splitRatio: ratio }),
-            scrolled: (position) => {
-              if (!panel.paseoScroller?.isConnected) panel.paseoScroller = panel.restyled ? findScrollContainer(panel.restyled.element) : null;
-              if (panel.paseoScroller) followByRatio(panel.paseoScroller, position);
-            },
+            scrolled: () => followEditor(panel),
           });
         } catch (error) {
           // The GitHub renderer shows this Split, saying why, until a renderer or view is chosen
@@ -478,31 +572,42 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
   };
 
   const attach = (bar: HTMLElement) => {
-    const info = findMarkdownPanel(bar);
+    const info = findTextPanel(bar);
     const original = bar.querySelector<HTMLElement>(VIEW_CONTROL_SELECTOR);
     const setView = findSetView(bar);
     if (!info || !original || !setView || !original.parentElement) {
       ignored.add(bar);
       return;
     }
-    const controls = new ToolbarControls(original, {
-      setEngine: (chosen) => {
-        // Choosing a renderer tries again to copy Paseo's editor where that failed
-        for (const each of panels.values()) each.copyFailure = null;
-        prefs.update({ engine: chosen });
-      },
-      setPalette: (palette) => prefs.update({ palette }),
-      setLayout: (layout) => setLayout(panel, layout),
-    });
+    const controls =
+      info.kind === "html"
+        ? new ToolbarControls(original, {
+            kind: "html",
+            setLayout: (layout) => setLayout(panel, layout),
+            setSyncScroll: (on) => setSyncScroll("html", on),
+            setResources: (on) => prefs.update({ htmlResources: on }),
+          })
+        : new ToolbarControls(original, {
+            kind: "markdown",
+            setEngine: (chosen) => {
+              // Choosing a renderer tries again to copy Paseo's editor where that failed
+              for (const each of panels.values()) each.copyFailure = null;
+              prefs.update({ engine: chosen });
+            },
+            setPalette: (palette) => prefs.update({ palette }),
+            setLayout: (layout) => setLayout(panel, layout),
+            setSyncScroll: (on) => setSyncScroll("markdown", on),
+          });
     const panel: Panel = {
       bar,
       info,
       setView,
       original,
       controls,
-      layout: prefs.get().openInSplit ? "split" : "preview",
+      layout: opensInSplit(prefs.get(), info.kind) ? "split" : "preview",
       requestedView: null,
       preview: null,
+      page: null,
       splitEditor: null,
       restyled: null,
       stopText: null,
@@ -531,7 +636,7 @@ export function startMarkdownPanels(registry: HostRegistry, engine: GfmEngine): 
 
   const detach = (panel: Panel, restoreToolbar: boolean) => {
     openPanels.delete(panelKey(panel.info));
-    removePreview(panel);
+    removeRendering(panel);
     removeSplitEditor(panel);
     restore(panel);
     panel.resizeObserver.disconnect();

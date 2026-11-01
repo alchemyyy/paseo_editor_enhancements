@@ -4,6 +4,8 @@ import { z } from "zod";
 export const MAX_REFERENCE_LENGTH = 2048;
 /** Larger images are not shown in the preview */
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+/** Larger files an HTML page references are not loaded */
+export const MAX_RESOURCE_BYTES = 20 * 1024 * 1024;
 
 const ReferenceInput = z.object({
   workspaceId: z.string().min(1),
@@ -16,6 +18,16 @@ const ReferenceInput = z.object({
 /** Reads a local image a Markdown file references, relative to that file */
 export const readImageRpc = defineRpc({
   name: "markdown.image",
+  input: ReferenceInput,
+  output: z.object({ mimeType: z.string(), base64: z.string() }),
+});
+
+/**
+ * Reads a local file an HTML page references (stylesheet, script, image, font, media), relative to
+ * that page, for its Split when the page may load resources. `markdownPath` is the page's path.
+ */
+export const readResourceRpc = defineRpc({
+  name: "html.resource",
   input: ReferenceInput,
   output: z.object({ mimeType: z.string(), base64: z.string() }),
 });
