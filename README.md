@@ -4,16 +4,19 @@ Paseo plugin for file editing: Markdown renderers (Paseo's own, or GitHub's as g
 
 ## Install
 
-1. Install [Paseo](https://paseo.sh) 0.13.0 or later and launch it once.
-2. Run the setup script from this folder:
+Requires [Paseo](https://paseo.sh) 0.13.0 or later with plugins turned on (Settings > Plugins > Enable plugins).
 
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File install.ps1
-   ```
+```sh
+paseo plugin install https://github.com/alchemyyy/paseo_editor_enhancements
+```
 
-   It installs the plugin with `paseo plugin install <folder>`, or runs `paseo plugin reload editor-enhancements` if the plugin is already installed. It first removes `markdown-enhancements`, this plugin's former id, if that is still installed. Run it again to reload the plugin after editing it. If plugins are disabled in `~/.paseo/config.json`, it warns you: turn on **Settings > Plugins > Enable plugins**, or set `pluginsEnabled` to `true` and run `paseo reload`.
+On start, the plugin removes `markdown-enhancements`, its former id, if Paseo still has it installed, since both would augment the Markdown panels.
 
-Option: `-PaseoCli <path>` points to `paseo.cmd` if it is not on `PATH` or in the default Paseo install folders.
+`paseo plugin update editor-enhancements` updates it, and `paseo plugin remove editor-enhancements` removes it. The [Plugin manager](https://github.com/alchemyyy/paseo_plugin_manager) plugin checks and updates installed plugins from the sidebar.
+
+The `paseo` command comes with the desktop app: Settings > Integrations > Command line puts it on `PATH`, or run `paseo.cmd` from the app's `resources\bin` folder.
+
+To work on the plugin, clone this repository and install the folder instead (`paseo plugin install <folder>`), then run `paseo plugin reload editor-enhancements` after editing it.
 
 ## Features
 
