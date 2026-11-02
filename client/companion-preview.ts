@@ -12,7 +12,7 @@ import { backendFor, type HostRegistry } from "./hosts";
 import { HtmlPage } from "./html-page";
 import { imageUrl } from "./images";
 import { paseoColorScheme, paseoVariablesRule } from "./palettes";
-import { opensInSplit, previewPrefs, splitChoice, syncChoice, syncsScroll } from "./prefs";
+import { previewPrefs, splitChoice, syncChoice, syncsScroll } from "./prefs";
 import { PreviewPane } from "./preview";
 import { classifyReference, splitLocalTarget } from "./references";
 import { watchPaseoTheme } from "./theme-watch";
@@ -85,7 +85,9 @@ export function companionPreviewFactory(
     const doc = container.ownerDocument;
     const backend = () => backendFor(registry, file.workspaceId);
     const reference = (value: string) => ({ workspaceId: file.workspaceId, markdownPath: file.path, reference: value });
-    let layout: Layout = input.layout ?? (opensInSplit(prefs.get(), kind) ? "split" : "preview");
+    // A companion window is an editor: a tab arriving on Preview, or with no layout, opens in Split,
+    // so its editor shows; Source stays Source. Preview can still be chosen.
+    let layout: Layout = input.layout === "source" ? "source" : "split";
     let preview: PreviewPane | HtmlPage | null = null;
     let scroller: HTMLElement | null = null;
     let restyled: { element: HTMLElement; display: string; width: string } | null = null;
