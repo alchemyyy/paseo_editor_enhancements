@@ -108,6 +108,12 @@ export function startEditorTabs(registry: HostRegistry, engine: GfmEngine): () =
       const current = attachStore();
       if (current) pins.toggle(current.getState(), workspaceKey, tabId);
     },
+    revealFile: (workspaceKey, path) => {
+      const workspaceId = workspaceKey.slice(workspaceKey.indexOf(":") + 1);
+      void backend(workspaceId)
+        .then((host) => host.revealFile({ workspaceId, path }))
+        .catch((error: unknown) => console.warn("[editor-enhancements] Could not open the file explorer", error));
+    },
   });
   registry.isTabPinned = pins.isPinned;
 

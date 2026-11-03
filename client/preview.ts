@@ -8,7 +8,7 @@ import type { GfmEngine } from "./gfm-engine";
 import { GfmPage } from "./gfm-page";
 import { type ColorScheme, type PaletteId, paletteScheme, previewStylesheet } from "./palettes";
 import { classifyReference, LOCAL_IMAGE_ATTRIBUTE, LOCAL_LINK_ATTRIBUTE, SOURCE_LINE_ATTRIBUTE } from "./references";
-import { type LineAnchor, previewOffsetForLine } from "./scroll-sync";
+import { increasingAnchors, type LineAnchor, previewOffsetForLine } from "./scroll-sync";
 
 export interface PreviewActions {
   /** A local image's URL, at once when cached */
@@ -129,13 +129,14 @@ export class PreviewPane {
     else if (position.atBottom) target = maximum;
     else if (position.line === null || position.lineCount === null) target = position.ratio * maximum;
     else {
-      const anchors: LineAnchor[] = [];
+      // The footnotes block renders last but carries its first definition's line, often early
+      const blocks: LineAnchor[] = [];
       for (const child of Array.from(this.article.children) as HTMLElement[]) {
-        const line = Number(child.getAttribute(SOURCE_LINE_ATTRIBUTE));
-        if (line > 0) anchors.push({ line, top: child.offsetTop });
+        if (child.classList.contains("footnotes")) continue;
+        blocks.push({ line: Number(child.getAttribute(SOURCE_LINE_ATTRIBUTE)), top: child.offsetTop });
       }
       const end = { line: position.lineCount + 1, top: scroller.scrollHeight };
-      target = previewOffsetForLine(anchors, position.line, end);
+      target = previewOffsetForLine(increasingAnchors(blocks), position.line, end);
     }
     scroller.scrollTop = Math.max(0, Math.min(maximum, target));
   }

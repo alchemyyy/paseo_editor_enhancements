@@ -43,6 +43,13 @@ export const resolveLinkRpc = defineRpc({
   }),
 });
 
+/** Shows a file selected in its folder in the daemon host's file browser; `path` is workspace-relative or absolute */
+export const revealFileRpc = defineRpc({
+  name: "files.reveal",
+  input: z.object({ workspaceId: z.string().min(1), path: z.string().min(1) }),
+  output: z.object({}),
+});
+
 const FileLocation = z.object({ workspaceId: z.string().min(1), path: z.string().min(1) });
 
 /** Reads a file for a companion window; `path` is workspace-relative or absolute */

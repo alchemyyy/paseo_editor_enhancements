@@ -14,6 +14,8 @@ const MERMAID_ZOOM_IN = 1.1;
 const MERMAID_ZOOM_OUT = 0.9;
 const MERMAID_OVERLAY_PADDING = 64;
 const COPIED_MS = 1000;
+/** gh-gfm-preview's tile layer cap; without tiles Leaflet's max zoom is Infinity and a lone point fits to it */
+const MAP_MAX_ZOOM = 19;
 
 /** Mermaid needs a fresh element id for every render in the page */
 let diagramSerial = 0;
@@ -332,7 +334,7 @@ export class GfmPage {
     container.className = "leaflet-diagram-map";
     code.replaceChildren(container);
     code.setAttribute("data-processed", "true");
-    const map = leaflet.map(container, { attributionControl: false, scrollWheelZoom: false, zoomControl: true });
+    const map = leaflet.map(container, { attributionControl: false, maxZoom: MAP_MAX_ZOOM, scrollWheelZoom: false, zoomControl: true });
     this.maps.set(code, map);
     // The palette's accent, which Leaflet needs as a value rather than a variable
     const accent = getComputedStyle(code).getPropertyValue("--fgColor-accent").trim() || "#1f6feb";

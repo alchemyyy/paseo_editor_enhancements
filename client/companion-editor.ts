@@ -4,6 +4,7 @@
 // the tab's file model, and the Mod-s binding that saves through it.
 // NOTE: App-internal. `cmTile` (@codemirror/view 6.4x) and `state.config.base` are private API.
 
+import { attachFindBar } from "./find-bar";
 // Narrow structural types for what this module touches; they shadow lib.dom's in this module.
 interface CmText {
   readonly length: number;
@@ -183,6 +184,8 @@ export function createCompanionEditor(input: {
   rebindable.requestMeasure?.();
   report(view.state, false);
   const editorView = view;
+  // Paseo's find widget belongs to its own editor; the copy gets the plugin's
+  attachFindBar(editorView, input.parent as HTMLElement);
 
   return {
     view: editorView,

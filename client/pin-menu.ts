@@ -1,6 +1,6 @@
-// "Pin tab" / "Unpin tab" in a file tab's context menu. The menu is app UI
-// (packages/app/src/screens/workspace/workspace-tab-menu.ts), so the entry is a clone of its own
-// "Copy file path" item, which keeps the menu's typography and spacing exactly.
+// "Pin tab" / "Unpin tab" and "Open in file explorer" in a file tab's context menu. The menu is app
+// UI (packages/app/src/screens/workspace/workspace-tab-menu.ts), so the entries are clones of its
+// own "Copy file path" item, which keeps the menu's typography and spacing exactly.
 import type { StoreApi } from "./fiber";
 import { collectPanes, type LayoutState, tabIdentity } from "./layout";
 
@@ -20,6 +20,9 @@ const STYLE_TEXT = [
 // Lucide "pin"
 const PIN_ICON =
   '<path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/>';
+// Lucide "folder-open"
+const FOLDER_ICON =
+  '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>';
 
 /** The deepest element holding the item's visible text */
 function findLabel(item: Element): Element | null {
@@ -40,7 +43,7 @@ function locateTab(
   state: LayoutState,
   tabId: string,
   preferredWorkspaces: readonly string[],
-): { workspaceKey: string; identity: string } | null {
+): { workspaceKey: string; identity: string; path: string | null } | null {
   const keys = Object.keys(state.layoutByWorkspace).sort(
     (left, right) => Number(preferredWorkspaces.includes(right)) - Number(preferredWorkspaces.includes(left)),
   );
@@ -49,7 +52,7 @@ function locateTab(
     if (!layout) continue;
     for (const pane of collectPanes(layout.root)) {
       const tab = (pane.tabs ?? []).find((candidate) => candidate.tabId === tabId);
-      if (tab) return { workspaceKey, identity: tabIdentity(tab) };
+      if (tab) return { workspaceKey, identity: tabIdentity(tab), path: tab.target.path ?? null };
     }
   }
   return null;
@@ -61,6 +64,8 @@ export function installPinMenu(input: {
   selectedWorkspaces(): readonly string[];
   isPinned(workspaceKey: string, identity: string): boolean;
   togglePin(workspaceKey: string, tabId: string): void;
+  /** Shows the file selected in its folder in the host's file browser */
+  revealFile(workspaceKey: string, path: string): void;
 }): () => void {
   const style = document.createElement("style");
   style.setAttribute("data-owner", STYLE_OWNER);
@@ -74,23 +79,30 @@ export function installPinMenu(input: {
     const store = input.layoutStore();
     const location = store ? locateTab(store.getState(), tabId, input.selectedWorkspaces()) : null;
     if (!location) return;
-    const item = template.cloneNode(true) as Element;
-    item.removeAttribute("data-testid");
-    item.setAttribute(ITEM_ATTRIBUTE, "pin");
-    const label = findLabel(item);
-    if (label) label.textContent = input.isPinned(location.workspaceKey, location.identity) ? "Unpin tab" : "Pin tab";
-    const icon = item.querySelector("svg");
-    if (icon) icon.innerHTML = PIN_ICON;
-    item.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-      input.togglePin(location.workspaceKey, tabId);
-    });
-    // Splits added later are inserted right after the template, so they stay before the pin
+    const entry = (name: string, text: string, iconPaths: string, run: () => void) => {
+      const item = template.cloneNode(true) as Element;
+      item.removeAttribute("data-testid");
+      item.setAttribute(ITEM_ATTRIBUTE, name);
+      const label = findLabel(item);
+      if (label) label.textContent = text;
+      const icon = item.querySelector("svg");
+      if (icon) icon.innerHTML = iconPaths;
+      item.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+        run();
+      });
+      return item;
+    };
+    const pinned = input.isPinned(location.workspaceKey, location.identity);
+    const items = [entry("pin", pinned ? "Unpin tab" : "Pin tab", PIN_ICON, () => input.togglePin(location.workspaceKey, tabId))];
+    const { path } = location;
+    if (path) items.push(entry("reveal", "Open in file explorer", FOLDER_ICON, () => input.revealFile(location.workspaceKey, path)));
+    // Splits added later are inserted right after the template, so they stay before these
     let anchor = template;
     while (anchor.nextElementSibling?.hasAttribute(SPLIT_ITEM_ATTRIBUTE)) anchor = anchor.nextElementSibling;
-    anchor.after(item);
+    anchor.after(...items);
   };
 
   const scan = () => {

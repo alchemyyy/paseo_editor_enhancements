@@ -33,6 +33,8 @@ export interface HostBackend {
   readResource(request: ReferenceRequest): Promise<{ mimeType: string; base64: string }>;
   resolveLink(request: ReferenceRequest): Promise<{ path: string | null; kind: "file" | "directory" | null }>;
   openExternal(url: string): Promise<void>;
+  /** Shows a file selected in its folder in the host's file browser */
+  revealFile(request: FileRequest): Promise<unknown>;
   readFile(request: FileRequest): Promise<FileContent>;
   writeFile(request: FileRequest & { content: string; expectedHash: string }): Promise<SaveResult>;
   /** Starts this instance's augmentation over the registry; returns its stop function */

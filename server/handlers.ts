@@ -11,9 +11,11 @@ import {
   type readImageRpc,
   type readResourceRpc,
   type resolveLinkRpc,
+  type revealFileRpc,
   type writeFileRpc,
 } from "../shared/contracts";
 import { candidatePaths, imageMimeType, resourceMimeType } from "./references";
+import { revealInFileBrowser } from "./reveal";
 
 async function workspaceRoot(context: PluginHandlerContext, workspaceId: string): Promise<string | null> {
   const { entries } = await context.paseo.workspaces.list({});
@@ -79,6 +81,14 @@ async function resolveFile(context: PluginHandlerContext, workspaceId: string, p
   const root = await workspaceRoot(context, workspaceId);
   if (!root) throw new Error("Workspace not found");
   return resolve(root, path);
+}
+
+export async function revealFile(
+  input: RpcInput<typeof revealFileRpc>,
+  context: PluginHandlerContext,
+): Promise<RpcOutput<typeof revealFileRpc>> {
+  await revealInFileBrowser(await resolveFile(context, input.workspaceId, input.path));
+  return {};
 }
 
 function hashOf(bytes: Buffer): string {

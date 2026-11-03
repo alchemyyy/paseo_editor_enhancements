@@ -4,7 +4,15 @@ import { startEditorTabs } from "./client/editor-tabs";
 import { GfmEngine } from "./client/gfm-engine";
 import { registerHost } from "./client/hosts";
 import { startTextPanels } from "./client/text-panels";
-import { engineAssetRpc, readFileRpc, readImageRpc, readResourceRpc, resolveLinkRpc, writeFileRpc } from "./shared/contracts";
+import {
+  engineAssetRpc,
+  readFileRpc,
+  readImageRpc,
+  readResourceRpc,
+  resolveLinkRpc,
+  revealFileRpc,
+  writeFileRpc,
+} from "./shared/contracts";
 
 export default function contribute(client: PluginClientContext) {
   // File panels, editors, and tab strips are reachable as DOM only on web and Electron
@@ -18,6 +26,7 @@ export default function contribute(client: PluginClientContext) {
     readResource: (request) => client.rpc(readResourceRpc, request),
     resolveLink: (request) => client.rpc(resolveLinkRpc, request),
     openExternal: openExternalUrl,
+    revealFile: (request) => client.rpc(revealFileRpc, request),
     readFile: (request) => client.rpc(readFileRpc, request),
     writeFile: (request) => client.rpc(writeFileRpc, request),
     start: (registry) => {

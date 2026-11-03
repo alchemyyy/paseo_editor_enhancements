@@ -69,6 +69,10 @@ The toolbar of every `.html` / `.htm` file gets **Preview | Split | Source** in 
 - Choosing Split makes new HTML tabs open in Split; choosing Preview or Source returns to Paseo's default (Preview, or Source for a line target). HTML and Markdown remember this separately.
 - Read-only HTML panels (files over 1 MiB) get the same Split, showing the file as saved and re-reading it when it changes on disk.
 
+### Open in file explorer
+
+- A file tab's context menu has **Open in file explorer**, after Pin tab: it opens the file's folder in the daemon host's file browser with the file selected (Explorer on Windows, Finder on macOS; on Linux, `xdg-open` opens the folder). The server RPC is `files.reveal`.
+
 ### Pinned tabs
 
 - A file tab's context menu has **Pin tab** / **Unpin tab** (after better-chat-management's split entries, when that plugin is installed).
@@ -100,7 +104,7 @@ Pins, LRU limits, and the companion window size are kept in `localStorage` under
 
 - Works only in the web and desktop (Electron) clients; native clients keep Paseo's viewer unchanged.
 - The plugin SDK cannot extend Paseo's built-in file panels or tab strips, so the plugin reads Paseo's internal React fibers (panel, toolbar view setter, editor buffer, pane context, layout store) and patches the toolbar, tab strip, and context menu DOM. A Paseo update can break it; an unrecognized panel is left alone.
-- Companion windows and the Paseo renderer's Split rely on CodeMirror private API (`cmTile`, `state.config.base`) to copy the Source editor. Paseo's find bar (Ctrl+F) does not open in a copied editor.
+- Companion windows and the Paseo renderer's Split rely on CodeMirror private API (`cmTile`, `state.config.base`) to copy the Source editor. Paseo's find widget belongs to its own editor, so a copied editor gets the plugin's find bar instead: Ctrl/Cmd+F (seeded with the selection), Enter / Shift+Enter or F3 / Shift+F3 (also Ctrl/Cmd+G) for next and previous, Escape to close. It finds plain text, ignoring case, with no replace.
 - Read-only Markdown panels (files over 1 MiB) show the file as saved, re-read when it changes on disk. Their Split uses the GitHub renderer, since the Paseo renderer's Split edits the buffer.
 - The GitHub renderer shares gh-gfm-preview's limits: math is found in the rendered HTML, so Markdown inside `$…$` (such as `_` pairs) can break it, and GitHub-only features such as @mentions and issue references are plain text. Mermaid, MathJax, Leaflet, and TopoJSON load as page globals (`mermaid`, `MathJax`, `L`, `topojson`) the first time a document uses them.
 - Local images are cached for the session; an image changed on disk shows after the plugin reloads or Paseo restarts.
